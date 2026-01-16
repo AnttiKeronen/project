@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WebDevDrive</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<h2>WebDevDrive</h2>
+
+<!-- Random button etusivulle testiksi -->
+<button id="btn-random">Click me!</button>
+
+<!-- Login Screen -->
+<div id="login-screen">
+  <h4>Login</h4>
+  <input id="login-username" placeholder="Username">
+  <input id="login-password" type="password" placeholder="Password">
+  <button id="btn-login">Login</button>
+  <p>No account? <a href="#" id="go-register">Register</a></p>
+</div>
+
+<!-- Register Screen -->
+<div id="register-screen" style="display:none;">
+  <h4>Register</h4>
+  <input id="reg-username" placeholder="Username">
+  <input id="reg-password" type="password" placeholder="Password">
+  <button id="btn-register">Register</button>
+  <p>Already registered? <a href="#" id="go-login">Login</a></p>
+</div>
+
+<!-- User Panel -->
+<div id="user-panel" style="display:none;">
+  <h4>Documents</h4>
+  <input id="new-title" placeholder="New document title">
+  <button id="btn-create">Create Document</button>
+  <ul id="doc-list"></ul>
+
+  <!-- Grant Edit Panel -->
+  <div id="grant-panel">
+    <h5>Grant Edit Permission</h5>
+    <input id="edit-user" placeholder="Username">
+    <button id="btn-grant">Grant Edit</button>
+    <p id="grant-info">Select a document first</p>
+  </div>
+
+  <!-- Edit Area -->
+  <div id="edit-area" style="display:none;">
+    <h5>Edit Document</h5>
+    <textarea id="edit-content" rows="5"></textarea>
+    <button id="btn-save">Save</button>
+    <button id="btn-release">Release Lock</button>
+    <button id="btn-public">Make Public</button>
+    <p id="public-link"></p>
+  </div>
+
+  <button id="btn-logout">Logout</button>
+</div>
+
+<script>
+document.addEventListener("DOMContentLoaded", () => {
+  // DOM elements
+  const login_screen = document.getElementById("login-screen");
+  const register_screen = document.getElementById("register-screen");
+  const user_panel = document.getElementById("user-panel");
+
+  const go_register = document.getElementById("go-register");
+  const go_login = document.getElementById("go-login");
+
+  const btn_login = document.getElementById("btn-login");
+  const btn_register = document.getElementById("btn-register");
+  const btn_logout = document.getElementById("btn-logout");
+  const btn_create = document.getElementById("btn-create");
+  const btn_save = document.getElementById("btn-save");
+  const btn_release = document.getElementById("btn-release");
+  const btn_public = document.getElementById("btn-public");
+  const btn_grant = document.getElementById("btn-grant");
+  const btn_random = document.getElementById("btn-random");
+
+  const login_username = document.getElementById("login-username");
+  const login_password = document.getElementById("login-password");
+  const reg_username = document.getElementById("reg-username");
+  const reg_password = document.getElementById("reg-password");
+  const new_title = document.getElementById("new-title");
+
+  const doc_list = document.getElementById("doc-list");
+  const edit_area = document.getElementById("edit-area");
+  const edit_content = document.getElementById("edit-content");
+  const edit_user = document.getElementById("edit-user");
+  const grant_info = document.getElementById("grant-info");
+  const public_link = document.getElementById("public-link");
+
+  let token = localStorage.getItem("token") || "";
+  let currentDocId = null;
+
+  // Random button test
+  btn_random.onclick = () => alert("Random button works!");
+
+  // Screen switches
+  go_register.onclick = () => { login_screen.style.display="none"; register_screen.style.display="block"; };
+  go_login.onclick = () => { register_screen.style.display="none"; login_screen.style.display="block"; };
+
+  function authHeaders() { return { "Content-Type":"application/json", "Authorization":"Bearer "+token }; }
+
+  // Register
+  btn_register.onclick = async () => {
+    const res = await fetch("/register", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({username: reg_username.value, password: reg_password.value}) });
+    if(res.ok){ alert("Registered!"); go_login.onclick(); } else alert(await res.text());
+  };
+
+  // Login
+  btn_login.onclick = async () => {
+    const res = await fetch("/login", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({username: login_username.value, password: login_password.value}) });
+    if(res.ok){ token=(await res.json()).token; localStorage.setItem("token",token); showPanel(); } else alert(await res.text());
+  };
+
+  function showPanel(){ login_screen.style.display="none"; register_screen.style.display="none"; user_panel.style.display="block"; loadDocs(); }
+
+  btn_logout.onclick = ()=>{ localStorage.removeItem("token"); location.reload(); }
+
+  async function loadDocs(){
+    const docs = await (await fetch("/docs",{ headers: authHeaders() })).json();
+    doc_list.innerHTML = "";
+    docs.forEach(doc=>{
+      const li = document.createElement("li");
+      li.textContent = doc.title+" ";
+      const editBtn = document.createElement("button");
+      editBtn.textContent="Edit";
+      editBtn.onclick = ()=>startEdit(doc);
+      li.appendChild(editBtn);
+      doc_list.appendChild(li);
+    });
+  }
+
+  function startEdit(doc){
+    currentDocId = doc._id;
+    edit_area.style.display="block";
+    edit_content.value = doc.content||"";
+    grant_info.textContent = "Selected document: "+doc.title;
+  }
+
+  btn_grant.onclick = async ()=>{
+    if(!currentDocId) return alert("Select a document first");
+    const username = edit_user.value.trim();
+    if(!username) return alert("Enter username");
+    const res = await fetch(`/docs/${currentDocId}/grant`, { method:"POST", headers:authHeaders(), body: JSON.stringify({username}) });
+    if(res.ok){ alert("Edit granted to "+username); edit_user.value=""; } else alert(await res.text());
+  };
+
+  btn_save.onclick = async ()=>{
+    if(!currentDocId) return;
+    const res = await fetch(`/docs/${currentDocId}`, { method:"PUT", headers:authHeaders(), body: JSON.stringify({content:edit_content.value}) });
+    if(res.ok){ alert("Saved"); edit_area.style.display="none"; loadDocs(); } else alert(await res.text());
+  };
+
+  btn_release.onclick = async ()=>{
+    if(!currentDocId) return;
+    await fetch(`/docs/${currentDocId}/release`, { method:"POST", headers:authHeaders() });
+    alert("Lock released");
+  };
+
+  btn_public.onclick = async ()=>{
+    if(!currentDocId) return;
+    const data = await (await fetch(`/docs/${currentDocId}/public`, { method:"POST", headers:authHeaders() })).json();
+    public_link.innerHTML=`<a href="${data.url}" target="_blank">${data.url}</a>`;
+  };
+
+  btn_create.onclick = async ()=>{
+    await fetch("/docs",{ method:"POST", headers:authHeaders(), body:JSON.stringify({title:new_title.value}) });
+    new_title.value=""; loadDocs();
+  };
+
+  if(token) showPanel();
+
+});
+</script>
+
+</body>
+</html>
