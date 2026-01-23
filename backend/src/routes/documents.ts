@@ -1,5 +1,6 @@
 import { Router } from "express";
 import crypto from "crypto";
+import mongoose from "mongoose";
 import { Document } from "../models/Document";
 import { AuthedRequest } from "../middleware/auth";
 import { User } from "../models/User";
@@ -7,7 +8,15 @@ import { User } from "../models/User";
 const LOCK_TTL_MS = 1000 * 60 * 10; // 10 min
 
 function canEdit(doc: any, userId: string) {
-  return String(doc.ownerId) === userId || doc.editors.map(String).includes(userId);
+  return String(doc.ownerId) === userId || (doc.editors ?? []).map(String).includes(userId);
+}
+
+function requireValidId(id: any, res: any) {
+  if (!id || id === "undefined" || !mongoose.isValidObjectId(id)) {
+    res.status(400).json({ message: "Invalid document id" });
+    return false;
+  }
+  return true;
 }
 
 type LockShape = { userId: any; lockedAt: Date | null };
@@ -19,6 +28,7 @@ type SpreadsheetShape = { cells: Map<string, string> };
 function ensureSpreadsheet(doc: any): asserts doc is { spreadsheet: SpreadsheetShape } {
   if (!doc.spreadsheet) doc.spreadsheet = { cells: new Map<string, string>() };
   if (!doc.spreadsheet.cells) doc.spreadsheet.cells = new Map<string, string>();
+
   // If it arrived as plain object, convert to Map
   if (!(doc.spreadsheet.cells instanceof Map)) {
     const obj = doc.spreadsheet.cells;
@@ -34,10 +44,23 @@ function ensureSpreadsheet(doc: any): asserts doc is { spreadsheet: SpreadsheetS
 
 export const documentsRoutes = Router();
 
+/**
+ * List docs user can access (owner OR editor).
+ * Adds "access" field: "owner" | "editor"
+ */
 documentsRoutes.get("/", async (req: AuthedRequest, res) => {
   const userId = req.userId!;
-  const docs = await Document.find({ ownerId: userId }).sort({ updatedAt: -1 });
-  res.json(docs);
+
+  const docs = await Document.find({
+    $or: [{ ownerId: userId }, { editors: userId }]
+  }).sort({ updatedAt: -1 });
+
+  res.json(
+    docs.map((d) => ({
+      ...d.toObject(),
+      access: String(d.ownerId) === userId ? "owner" : "editor"
+    }))
+  );
 });
 
 // Create document: { title, type: "text"|"spreadsheet" }
@@ -61,19 +84,27 @@ documentsRoutes.post("/", async (req: AuthedRequest, res) => {
 documentsRoutes.put("/:id/rename", async (req: AuthedRequest, res) => {
   const userId = req.userId!;
   const { id } = req.params;
+  if (!requireValidId(id, res)) return;
+
   const { title } = req.body ?? {};
   const doc = await Document.findById(id);
   if (!doc) return res.status(404).json({ message: "Not found" });
-  if (String(doc.ownerId) !== userId) return res.status(403).json({ message: "Only owner can rename" });
 
-  doc.title = title || doc.title;
+  // ✅ allow owner OR editors
+  if (!canEdit(doc, userId)) return res.status(403).json({ message: "No edit permission" });
+
+  doc.title = String(title || doc.title);
   await doc.save();
   res.json(doc);
 });
 
+
 documentsRoutes.delete("/:id", async (req: AuthedRequest, res) => {
   const userId = req.userId!;
-  const doc = await Document.findById(req.params.id);
+  const { id } = req.params;
+  if (!requireValidId(id, res)) return;
+
+  const doc = await Document.findById(id);
   if (!doc) return res.status(404).json({ message: "Not found" });
   if (String(doc.ownerId) !== userId) return res.status(403).json({ message: "Only owner can delete" });
 
@@ -83,32 +114,108 @@ documentsRoutes.delete("/:id", async (req: AuthedRequest, res) => {
 
 documentsRoutes.get("/:id", async (req: AuthedRequest, res) => {
   const userId = req.userId!;
-  const doc = await Document.findById(req.params.id);
+  const { id } = req.params;
+  if (!requireValidId(id, res)) return;
+
+  const doc = await Document.findById(id);
   if (!doc) return res.status(404).json({ message: "Not found" });
-  if (!canEdit(doc, userId) && String(doc.ownerId) !== userId) return res.status(403).json({ message: "Forbidden" });
+  if (!canEdit(doc, userId)) return res.status(403).json({ message: "Forbidden" });
 
   res.json(doc);
 });
 
 documentsRoutes.post("/:id/grant-editor", async (req: AuthedRequest, res) => {
   const userId = req.userId!;
+  const { id } = req.params;
+  if (!requireValidId(id, res)) return;
+
   const { email } = req.body ?? {};
-  const doc = await Document.findById(req.params.id);
+  const cleanEmail = String(email ?? "").trim().toLowerCase();
+  if (!cleanEmail) return res.status(400).json({ message: "Email required" });
+
+  const doc = await Document.findById(id);
   if (!doc) return res.status(404).json({ message: "Not found" });
   if (String(doc.ownerId) !== userId) return res.status(403).json({ message: "Only owner can grant permissions" });
 
-  const u = await User.findOne({ email });
+  const u = await User.findOne({ email: cleanEmail });
   if (!u) return res.status(404).json({ message: "User not found" });
 
   const uid = String(u._id);
-  if (!doc.editors.map(String).includes(uid)) doc.editors.push(u._id as any);
+
+  // don't allow adding owner to editors
+  if (String(doc.ownerId) === uid) return res.status(400).json({ message: "Owner already has access" });
+
+  // avoid duplicates
+  if (!(doc.editors ?? []).map(String).includes(uid)) {
+    doc.editors.push(u._id as any);
+    await doc.save();
+  }
+
+  res.json({ ok: true });
+});
+
+// Owner-only: list access (owner + editors with emails)
+documentsRoutes.get("/:id/access", async (req: AuthedRequest, res) => {
+  const userId = req.userId!;
+  const { id } = req.params;
+  if (!requireValidId(id, res)) return;
+
+  const doc = await Document.findById(id)
+    .populate("ownerId", "email")
+    .populate("editors", "email");
+
+  if (!doc) return res.status(404).json({ message: "Not found" });
+
+  const ownerObj = doc.ownerId as any;
+  const ownerId = ownerObj?._id ? String(ownerObj._id) : String(doc.ownerId);
+  if (ownerId !== userId) return res.status(403).json({ message: "Only owner can view access" });
+
+  const editors = (doc.editors ?? []) as any[];
+
+  res.json({
+    owner: { _id: String(ownerObj._id ?? ownerId), email: String(ownerObj.email ?? "") },
+    editors: editors.map((u) => ({ _id: String(u._id), email: String(u.email ?? "") }))
+  });
+});
+
+// Owner-only: revoke editor (by userId OR email)
+documentsRoutes.post("/:id/revoke-editor", async (req: AuthedRequest, res) => {
+  const userId = req.userId!;
+  const { id } = req.params;
+  if (!requireValidId(id, res)) return;
+
+  const { userId: removeUserId, email } = req.body ?? {};
+
+  const doc = await Document.findById(id);
+  if (!doc) return res.status(404).json({ message: "Not found" });
+  if (String(doc.ownerId) !== userId) return res.status(403).json({ message: "Only owner can revoke permissions" });
+
+  let targetId: string | null = null;
+
+  if (removeUserId) {
+    targetId = String(removeUserId);
+  } else if (email) {
+    const u = await User.findOne({ email: String(email).trim().toLowerCase() });
+    if (!u) return res.status(404).json({ message: "User not found" });
+    targetId = String(u._id);
+  } else {
+    return res.status(400).json({ message: "userId or email required" });
+  }
+
+  if (String(doc.ownerId) === targetId) return res.status(400).json({ message: "Cannot revoke owner" });
+
+  doc.editors = (doc.editors ?? []).filter((eid: any) => String(eid) !== targetId) as any;
   await doc.save();
-  res.json(doc);
+
+  res.json({ ok: true });
 });
 
 documentsRoutes.post("/:id/share", async (req: AuthedRequest, res) => {
   const userId = req.userId!;
-  const doc = await Document.findById(req.params.id);
+  const { id } = req.params;
+  if (!requireValidId(id, res)) return;
+
+  const doc = await Document.findById(id);
   if (!doc) return res.status(404).json({ message: "Not found" });
   if (String(doc.ownerId) !== userId) return res.status(403).json({ message: "Only owner can share" });
 
@@ -120,7 +227,10 @@ documentsRoutes.post("/:id/share", async (req: AuthedRequest, res) => {
 
 documentsRoutes.post("/:id/unshare", async (req: AuthedRequest, res) => {
   const userId = req.userId!;
-  const doc = await Document.findById(req.params.id);
+  const { id } = req.params;
+  if (!requireValidId(id, res)) return;
+
+  const doc = await Document.findById(id);
   if (!doc) return res.status(404).json({ message: "Not found" });
   if (String(doc.ownerId) !== userId) return res.status(403).json({ message: "Only owner can unshare" });
 
@@ -132,12 +242,16 @@ documentsRoutes.post("/:id/unshare", async (req: AuthedRequest, res) => {
 // Locking
 documentsRoutes.post("/:id/lock", async (req: AuthedRequest, res) => {
   const userId = req.userId!;
-  const doc = await Document.findById(req.params.id);
+  const { id } = req.params;
+  if (!requireValidId(id, res)) return;
+
+  const doc = await Document.findById(id);
   if (!doc) return res.status(404).json({ message: "Not found" });
   if (!canEdit(doc, userId)) return res.status(403).json({ message: "No edit permission" });
 
   ensureLock(doc);
 
+  // expire old lock
   if (doc.lock.lockedAt && Date.now() - new Date(doc.lock.lockedAt).getTime() > LOCK_TTL_MS) {
     doc.lock.userId = null;
     doc.lock.lockedAt = null;
@@ -155,7 +269,10 @@ documentsRoutes.post("/:id/lock", async (req: AuthedRequest, res) => {
 
 documentsRoutes.post("/:id/unlock", async (req: AuthedRequest, res) => {
   const userId = req.userId!;
-  const doc = await Document.findById(req.params.id);
+  const { id } = req.params;
+  if (!requireValidId(id, res)) return;
+
+  const doc = await Document.findById(id);
   if (!doc) return res.status(404).json({ message: "Not found" });
 
   ensureLock(doc);
@@ -171,8 +288,11 @@ documentsRoutes.post("/:id/unlock", async (req: AuthedRequest, res) => {
 // Save content (text docs)
 documentsRoutes.put("/:id/content", async (req: AuthedRequest, res) => {
   const userId = req.userId!;
+  const { id } = req.params;
+  if (!requireValidId(id, res)) return;
+
   const { content } = req.body ?? {};
-  const doc = await Document.findById(req.params.id);
+  const doc = await Document.findById(id);
   if (!doc) return res.status(404).json({ message: "Not found" });
   if (!canEdit(doc, userId)) return res.status(403).json({ message: "No edit permission" });
 
@@ -191,11 +311,14 @@ documentsRoutes.put("/:id/content", async (req: AuthedRequest, res) => {
   res.json(doc);
 });
 
-// Spreadsheet cells update: { cells: { A1:"1", A2:"=SUM(A1:A1)" } }
+// Spreadsheet cells update
 documentsRoutes.put("/:id/spreadsheet", async (req: AuthedRequest, res) => {
   const userId = req.userId!;
+  const { id } = req.params;
+  if (!requireValidId(id, res)) return;
+
   const { cells } = req.body ?? {};
-  const doc = await Document.findById(req.params.id);
+  const doc = await Document.findById(id);
   if (!doc) return res.status(404).json({ message: "Not found" });
   if (!canEdit(doc, userId)) return res.status(403).json({ message: "No edit permission" });
 
@@ -225,18 +348,25 @@ documentsRoutes.put("/:id/spreadsheet", async (req: AuthedRequest, res) => {
 // Comments
 documentsRoutes.get("/:id/comments", async (req: AuthedRequest, res) => {
   const userId = req.userId!;
-  const doc = await Document.findById(req.params.id);
+  const { id } = req.params;
+  if (!requireValidId(id, res)) return;
+
+  const doc = await Document.findById(id);
   if (!doc) return res.status(404).json({ message: "Not found" });
   if (!canEdit(doc, userId)) return res.status(403).json({ message: "No access" });
+
   res.json(doc.comments ?? []);
 });
 
 documentsRoutes.post("/:id/comments", async (req: AuthedRequest, res) => {
   const userId = req.userId!;
+  const { id } = req.params;
+  if (!requireValidId(id, res)) return;
+
   const { text, quote } = req.body ?? {};
   if (!text || String(text).trim().length === 0) return res.status(400).json({ message: "Comment text required" });
 
-  const doc = await Document.findById(req.params.id);
+  const doc = await Document.findById(id);
   if (!doc) return res.status(404).json({ message: "Not found" });
   if (!canEdit(doc, userId)) return res.status(403).json({ message: "No access" });
 
@@ -256,6 +386,7 @@ documentsRoutes.post("/:id/comments", async (req: AuthedRequest, res) => {
 documentsRoutes.delete("/:id/comments/:commentId", async (req: AuthedRequest, res) => {
   const userId = req.userId!;
   const { id, commentId } = req.params;
+  if (!requireValidId(id, res)) return;
 
   const doc = await Document.findById(id);
   if (!doc) return res.status(404).json({ message: "Not found" });

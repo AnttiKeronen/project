@@ -3,15 +3,20 @@ import { api } from "../api";
 import { Link, useNavigate } from "react-router-dom";
 
 type DocType = "text" | "spreadsheet";
+type Access = "owner" | "editor";
 
 type Doc = {
   _id: string;
   title: string;
-  type?: DocType; // optional for backward compatibility
+  type?: DocType;
   createdAt: string;
   updatedAt: string;
+
   isPublic: boolean;
   publicShareId?: string | null;
+
+  // returned by backend /documents (our new mapping)
+  access?: Access;
 };
 
 function getPageButtons(current: number, total: number) {
@@ -36,11 +41,19 @@ function typeBadge(t?: DocType) {
   return <span className={`badge ${cls}`}>{label}</span>;
 }
 
+function accessBadge(access?: Access) {
+  if (!access) return null;
+  const cls = access === "owner" ? "bg-primary" : "bg-info";
+  const label = access === "owner" ? "OWNER" : "EDITOR";
+  return <span className={`badge ${cls}`}>{label}</span>;
+}
+
 export default function Drive() {
   const nav = useNavigate();
 
   const [docs, setDocs] = useState<Doc[]>([]);
   const [err, setErr] = useState("");
+  const [msg, setMsg] = useState("");
 
   // Sorting
   const [sortBy, setSortBy] = useState<"name" | "created" | "updated">("updated");
@@ -56,7 +69,7 @@ export default function Drive() {
   async function load() {
     setErr("");
     try {
-      const res = await api.get("/documents");
+      const res = await api.get<Doc[]>("/documents");
       setDocs(res.data);
     } catch (e: any) {
       setErr(e?.response?.data?.message ?? "Failed to load documents");
@@ -96,12 +109,13 @@ export default function Drive() {
   const pageButtons = useMemo(() => getPageButtons(safePage, totalPages), [safePage, totalPages]);
 
   async function createDoc(type: DocType) {
+    setErr("");
     try {
       const res = await api.post("/documents", {
         title: type === "spreadsheet" ? "Untitled spreadsheet" : "Untitled",
         type
       });
-      // If backend returns created doc id, go straight to editor
+
       const newId = res?.data?._id;
       if (newId) {
         if (type === "spreadsheet") nav(`/sheet/${newId}`);
@@ -111,6 +125,66 @@ export default function Drive() {
       }
     } catch (e: any) {
       setErr(e?.response?.data?.message ?? "Failed to create document");
+    }
+  }
+
+  async function copyPublicLink(shareId: string) {
+    setMsg("");
+    setErr("");
+    const full = `${window.location.origin}/share/${shareId}`;
+    try {
+      await navigator.clipboard.writeText(full);
+      setMsg("Link copied to clipboard.");
+    } catch {
+      try {
+        window.prompt("Copy this link:", full);
+      } catch {
+        setErr("Could not copy link automatically.");
+      }
+    }
+  }
+
+  async function makePublic(docId: string) {
+    setErr("");
+    setMsg("");
+    try {
+      const res = await api.post<{ shareId: string }>(`/documents/${docId}/share`);
+      setDocs((prev) =>
+        prev.map((d) => (d._id === docId ? { ...d, isPublic: true, publicShareId: res.data.shareId } : d))
+      );
+      setMsg("Public link enabled.");
+    } catch (e: any) {
+      setErr(e?.response?.data?.message ?? "Failed to enable public link");
+    }
+  }
+
+  async function disablePublic(docId: string) {
+    setErr("");
+    setMsg("");
+    try {
+      await api.post(`/documents/${docId}/unshare`);
+      setDocs((prev) => prev.map((d) => (d._id === docId ? { ...d, isPublic: false } : d)));
+      setMsg("Public link disabled.");
+    } catch (e: any) {
+      setErr(e?.response?.data?.message ?? "Failed to disable public link");
+    }
+  }
+
+  async function deleteDoc(docId: string, access?: Access) {
+    setErr("");
+    setMsg("");
+
+    // editor shouldn't delete (backend blocks it anyway)
+    if (access && access !== "owner") {
+      setErr("Only owner can delete.");
+      return;
+    }
+
+    try {
+      await api.delete(`/documents/${docId}`);
+      await load();
+    } catch (e: any) {
+      setErr(e?.response?.data?.message ?? "Delete failed");
     }
   }
 
@@ -130,6 +204,7 @@ export default function Drive() {
       </div>
 
       {err && <div className="alert alert-danger mt-3 mb-0">{err}</div>}
+      {msg && <div className="alert alert-success mt-3 mb-0">{msg}</div>}
 
       {/* Controls */}
       <div className="row g-2 mt-3 align-items-end">
@@ -170,6 +245,7 @@ export default function Drive() {
         {pageDocs.map((d) => {
           const t = d.type ?? "text";
           const openPath = t === "spreadsheet" ? `/sheet/${d._id}` : `/edit/${d._id}`;
+          const access = d.access ?? "owner";
 
           return (
             <div key={d._id} className="card">
@@ -179,6 +255,7 @@ export default function Drive() {
                     <div className="d-flex align-items-center gap-2 flex-wrap">
                       <div className="fw-bold">{d.title}</div>
                       {typeBadge(t)}
+                      {accessBadge(access)}
                     </div>
 
                     <div className="text-muted small">
@@ -186,12 +263,29 @@ export default function Drive() {
                       {new Date(d.updatedAt).toLocaleString()}
                     </div>
 
+                    {/* Public link */}
                     {d.isPublic && d.publicShareId ? (
-                      <div className="small mt-2">
-                        Public link:{" "}
+                      <div className="small mt-2 d-flex gap-2 flex-wrap align-items-center">
                         <a href={`/share/${d.publicShareId}`} target="_blank" rel="noreferrer">
                           /share/{d.publicShareId}
                         </a>
+                        <button
+                          className="btn btn-outline-secondary btn-sm"
+                          onClick={() => copyPublicLink(d.publicShareId!)}
+                        >
+                          Copy
+                        </button>
+                        {access === "owner" ? (
+                          <button className="btn btn-outline-warning btn-sm" onClick={() => disablePublic(d._id)}>
+                            Disable
+                          </button>
+                        ) : null}
+                      </div>
+                    ) : access === "owner" ? (
+                      <div className="small mt-2">
+                        <button className="btn btn-outline-success btn-sm" onClick={() => makePublic(d._id)}>
+                          Make public
+                        </button>
                       </div>
                     ) : null}
                   </div>
@@ -200,12 +294,12 @@ export default function Drive() {
                     <Link className="btn btn-outline-primary btn-sm" to={openPath}>
                       Open
                     </Link>
+
                     <button
                       className="btn btn-outline-danger btn-sm"
-                      onClick={async () => {
-                        await api.delete(`/documents/${d._id}`);
-                        load();
-                      }}
+                      disabled={access !== "owner"}
+                      title={access !== "owner" ? "Only owner can delete" : ""}
+                      onClick={() => deleteDoc(d._id, access)}
                     >
                       Delete
                     </button>

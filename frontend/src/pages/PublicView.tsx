@@ -1,7 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
-import axios, { AxiosError } from "axios";
+import { AxiosError } from "axios";
 import editorJsHtml from "editorjs-html";
+import { api } from "../api";
+import html2pdf from "html2pdf.js";
 
 type PublicDoc = {
   id: string;
@@ -81,24 +83,71 @@ function evalCell(raw: string, cells: Record<string, string>): string {
   return String(s);
 }
 
+function safeFilename(name: string) {
+  const base = (name || "document")
+    .trim()
+    .replace(/[<>:"/\\|?*\x00-\x1F]/g, "_")
+    .slice(0, 120);
+  return base || "document";
+}
+
 export default function PublicView() {
   const { shareId } = useParams();
   const [doc, setDoc] = useState<PublicDoc | null>(null);
   const [err, setErr] = useState("");
+  const [pdfBusy, setPdfBusy] = useState(false);
 
   const parser = useMemo(() => editorJsHtml(), []);
+  const pdfRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
+    if (!shareId) {
+      setErr("Missing share id.");
+      return;
+    }
+
+    let cancelled = false;
+
     (async () => {
       try {
-        const res = await axios.get<PublicDoc>(`http://localhost:5000/api/public/share/${shareId}`);
-        setDoc(res.data);
+        setErr("");
+        setDoc(null);
+
+        const res = await api.get<PublicDoc>(`/public/share/${encodeURIComponent(shareId)}`);
+        if (!cancelled) setDoc(res.data);
       } catch (e) {
         const ae = e as AxiosError<ErrBody>;
-        setErr(ae.response?.data?.message ?? "Not found");
+        if (!cancelled) setErr(ae.response?.data?.message ?? "Not found");
       }
     })();
+
+    return () => {
+      cancelled = true;
+    };
   }, [shareId]);
+
+  async function downloadPdf() {
+    if (!doc) return;
+    const el = pdfRef.current;
+    if (!el) return;
+
+    setPdfBusy(true);
+    try {
+      // Slightly better PDFs: ensure we export the content area only
+      await (html2pdf() as any)
+        .from(el)
+        .set({
+          margin: 10,
+          filename: `${safeFilename(doc.title)}.pdf`,
+          html2canvas: { scale: 2, useCORS: true },
+          jsPDF: { unit: "mm", format: "a4", orientation: "portrait" },
+          pagebreak: { mode: ["css", "legacy"] }
+        })
+        .save();
+    } finally {
+      setPdfBusy(false);
+    }
+  }
 
   if (err) {
     return (
@@ -137,79 +186,90 @@ export default function PublicView() {
 
   return (
     <div className="container py-4" style={{ maxWidth: 980 }}>
-      <h2>{doc.title}</h2>
-
-      <div className="text-muted small mb-3">
-        Created: {new Date(doc.createdAt).toLocaleString()} • Updated: {new Date(doc.updatedAt).toLocaleString()}
-      </div>
-
-      {doc.type === "text" ? (
-        <div className="card">
-          <div className="card-body">
-            <div dangerouslySetInnerHTML={{ __html: html }} />
+      <div className="d-flex justify-content-between align-items-start gap-2 flex-wrap">
+        <div>
+          <h2 className="mb-1">{doc.title}</h2>
+          <div className="text-muted small">
+            Created: {new Date(doc.createdAt).toLocaleString()} • Updated: {new Date(doc.updatedAt).toLocaleString()}
           </div>
         </div>
-      ) : (
-        <div className="card">
-          <div className="card-body">
-            <div className="table-responsive">
-              <table className="table table-sm table-bordered align-middle">
-                <thead>
-                  <tr>
-                    <th style={{ width: 70 }}></th>
-                    {Array.from({ length: 10 }, (_, c) => (
-                      <th key={c} className="text-center" style={{ minWidth: 120 }}>
-                        {colName(c)}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {Array.from({ length: 10 }, (_, r) => (
-                    <tr key={r}>
-                      <th className="text-center">{r + 1}</th>
-                      {Array.from({ length: 10 }, (_, c) => {
-                        const key = cellKey(c, r);
-                        const raw = getRaw(cells, key);
-                        const view = evalCell(raw, cells);
-                        return (
-                          <td key={key}>
-                            <div className="small text-muted">{raw}</div>
-                            {raw.startsWith("=") ? <div className="fw-bold">{view}</div> : <div>{view}</div>}
-                          </td>
-                        );
-                      })}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+
+        <button className="btn btn-outline-primary" onClick={downloadPdf} disabled={pdfBusy}>
+          {pdfBusy ? "Generating PDF…" : "Download PDF"}
+        </button>
+      </div>
+
+      {/* ✅ PDF export content starts here */}
+      <div ref={pdfRef} className="mt-3">
+        {doc.type === "text" ? (
+          <div className="card">
+            <div className="card-body">
+              <div dangerouslySetInnerHTML={{ __html: html }} />
             </div>
-
-            <div className="text-muted small">Read-only spreadsheet view. Only SUM is supported.</div>
           </div>
-        </div>
-      )}
-
-      {/* Comments read-only */}
-      <div className="card mt-3">
-        <div className="card-body">
-          <h5 className="mb-2">Comments</h5>
-          <div className="d-grid gap-2">
-            {(doc.comments ?? []).map((c) => (
-              <div key={c._id} className="border rounded p-2">
-                {c.quote ? (
-                  <div className="small text-muted mb-1">
-                    Quote: <em>{c.quote}</em>
-                  </div>
-                ) : null}
-                <div>{c.text}</div>
-                <div className="small text-muted mt-1">{new Date(c.createdAt).toLocaleString()}</div>
+        ) : (
+          <div className="card">
+            <div className="card-body">
+              <div className="table-responsive">
+                <table className="table table-sm table-bordered align-middle">
+                  <thead>
+                    <tr>
+                      <th style={{ width: 70 }}></th>
+                      {Array.from({ length: 10 }, (_, c) => (
+                        <th key={c} className="text-center" style={{ minWidth: 120 }}>
+                          {colName(c)}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {Array.from({ length: 10 }, (_, r) => (
+                      <tr key={r}>
+                        <th className="text-center">{r + 1}</th>
+                        {Array.from({ length: 10 }, (_, c) => {
+                          const key = cellKey(c, r);
+                          const raw = getRaw(cells, key);
+                          const view = evalCell(raw, cells);
+                          return (
+                            <td key={key}>
+                              <div className="small text-muted">{raw}</div>
+                              {raw.startsWith("=") ? <div className="fw-bold">{view}</div> : <div>{view}</div>}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
-            ))}
-            {(doc.comments ?? []).length === 0 ? <div className="text-muted">No comments.</div> : null}
+
+              <div className="text-muted small">Read-only spreadsheet view. Only SUM is supported.</div>
+            </div>
+          </div>
+        )}
+
+        {/* Comments read-only */}
+        <div className="card mt-3">
+          <div className="card-body">
+            <h5 className="mb-2">Comments</h5>
+            <div className="d-grid gap-2">
+              {(doc.comments ?? []).map((c) => (
+                <div key={c._id} className="border rounded p-2">
+                  {c.quote ? (
+                    <div className="small text-muted mb-1">
+                      Quote: <em>{c.quote}</em>
+                    </div>
+                  ) : null}
+                  <div>{c.text}</div>
+                  <div className="small text-muted mt-1">{new Date(c.createdAt).toLocaleString()}</div>
+                </div>
+              ))}
+              {(doc.comments ?? []).length === 0 ? <div className="text-muted">No comments.</div> : null}
+            </div>
           </div>
         </div>
       </div>
+      {}
 
       <div className="text-muted small mt-3">Read-only public view.</div>
     </div>
