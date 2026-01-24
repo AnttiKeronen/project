@@ -7,8 +7,7 @@ export default function Register() {
   const nav = useNavigate();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [err, setErr] = useState("");
-
+  const [err, setError] = useState("");
   return (
     <div style={{ maxWidth: 420, margin: "40px auto" }}>
       <h2>Register</h2>
@@ -17,20 +16,20 @@ export default function Register() {
       <input placeholder="Password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} style={{ width: "100%", marginBottom: 8 }} />
       <button
         onClick={async () => {
-          setErr("");
+          setError("");
           try {
             const res = await api.post("/auth/register", { email, password });
             setToken(res.data.token);
             nav("/");
           } catch (e: any) {
-            setErr(e?.response?.data?.message ?? "Register failed");
+            setError(e?.response?.data?.message ?? "Register failed");
           }
         }}
       >
         Register
       </button>
       <p style={{ marginTop: 12 }}>
-        Already have account? <Link to="/login">Login</Link>
+        If ur boss and have an account <Link to="/login">Login</Link>
       </p>
     </div>
   );

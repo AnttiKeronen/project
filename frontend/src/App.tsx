@@ -1,7 +1,6 @@
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { Navbar } from "./components/Navbar";
 import { ProtectedRoute } from "./components/ProtectedRoute";
-
 import Login from "./pages/Login";
 import Register from "./pages/Register";
 import Drive from "./pages/Drive";
@@ -14,13 +13,11 @@ export default function App() {
   return (
     <BrowserRouter>
       <Navbar />
-
       <Routes>
         {/* Public routes */}
         <Route path="/login" element={<Login />} />
         <Route path="/register" element={<Register />} />
         <Route path="/share/:shareId" element={<PublicView />} />
-
         {/* Protected routes */}
         <Route
           path="/"
@@ -30,7 +27,6 @@ export default function App() {
             </ProtectedRoute>
           }
         />
-
         <Route
           path="/edit/:id"
           element={
@@ -39,7 +35,6 @@ export default function App() {
             </ProtectedRoute>
           }
         />
-
         <Route
           path="/sheet/:id"
           element={
@@ -48,7 +43,6 @@ export default function App() {
             </ProtectedRoute>
           }
         />
-
         <Route
           path="/profile"
           element={

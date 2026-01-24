@@ -15,9 +15,7 @@ type PublicDoc = {
   createdAt: string;
   updatedAt: string;
 };
-
 type ErrBody = { message?: string };
-
 function colName(i: number) {
   return String.fromCharCode("A".charCodeAt(0) + i);
 }
@@ -36,17 +34,14 @@ function sumRange(a: string, b: string, cells: Record<string, string>): number {
   const A = parseCellRef(a);
   const B = parseCellRef(b);
   if (!A || !B) return 0;
-
   const c1 = A.col.charCodeAt(0);
   const c2 = B.col.charCodeAt(0);
   const r1 = A.row;
   const r2 = B.row;
-
   const cMin = Math.min(c1, c2);
   const cMax = Math.max(c1, c2);
   const rMin = Math.min(r1, r2);
   const rMax = Math.max(r1, r2);
-
   let s = 0;
   for (let c = cMin; c <= cMax; c++) {
     for (let r = rMin; r <= rMax; r++) {
@@ -61,16 +56,13 @@ function sumRange(a: string, b: string, cells: Record<string, string>): number {
 function evalCell(raw: string, cells: Record<string, string>): string {
   const v = raw.trim();
   if (!v.startsWith("=")) return v;
-
   const m = v.toUpperCase().match(/^=SUM\((.+)\)$/);
   if (!m) return "#ERR";
-
   const inside = m[1].trim();
   if (inside.includes(":")) {
     const [a, b] = inside.split(":");
     return String(sumRange(a, b, cells));
   }
-
   const parts = inside.split(",").map((p) => p.trim()).filter(Boolean);
   let s = 0;
   for (const p of parts) {
@@ -82,7 +74,6 @@ function evalCell(raw: string, cells: Record<string, string>): string {
   }
   return String(s);
 }
-
 function safeFilename(name: string) {
   const base = (name || "document")
     .trim()
@@ -90,50 +81,41 @@ function safeFilename(name: string) {
     .slice(0, 120);
   return base || "document";
 }
-
 export default function PublicView() {
   const { shareId } = useParams();
   const [doc, setDoc] = useState<PublicDoc | null>(null);
-  const [err, setErr] = useState("");
+  const [err, setError] = useState("");
   const [pdfBusy, setPdfBusy] = useState(false);
-
   const parser = useMemo(() => editorJsHtml(), []);
   const pdfRef = useRef<HTMLDivElement | null>(null);
-
   useEffect(() => {
     if (!shareId) {
-      setErr("Missing share id.");
+      setError("Missing share id.");
       return;
     }
-
     let cancelled = false;
-
     (async () => {
       try {
-        setErr("");
+        setError("");
         setDoc(null);
-
         const res = await api.get<PublicDoc>(`/public/share/${encodeURIComponent(shareId)}`);
         if (!cancelled) setDoc(res.data);
       } catch (e) {
         const ae = e as AxiosError<ErrBody>;
-        if (!cancelled) setErr(ae.response?.data?.message ?? "Not found");
+        if (!cancelled) setError(ae.response?.data?.message ?? "Not found");
       }
     })();
-
     return () => {
       cancelled = true;
     };
   }, [shareId]);
-
   async function downloadPdf() {
     if (!doc) return;
     const el = pdfRef.current;
     if (!el) return;
-
     setPdfBusy(true);
     try {
-      // Slightly better PDFs: ensure we export the content area only
+      //ensure we export the content area only
       await (html2pdf() as any)
         .from(el)
         .set({
@@ -148,7 +130,6 @@ export default function PublicView() {
       setPdfBusy(false);
     }
   }
-
   if (err) {
     return (
       <div className="container py-4" style={{ maxWidth: 980 }}>
@@ -157,7 +138,6 @@ export default function PublicView() {
       </div>
     );
   }
-
   if (!doc) {
     return (
       <div className="container py-4" style={{ maxWidth: 980 }}>
@@ -166,7 +146,6 @@ export default function PublicView() {
       </div>
     );
   }
-
   let html = "";
   if (doc.type === "text") {
     try {
@@ -181,9 +160,7 @@ export default function PublicView() {
         .replaceAll("\n", "<br/>")}</p>`;
     }
   }
-
   const cells = doc.spreadsheet?.cells ?? {};
-
   return (
     <div className="container py-4" style={{ maxWidth: 980 }}>
       <div className="d-flex justify-content-between align-items-start gap-2 flex-wrap">
@@ -193,13 +170,12 @@ export default function PublicView() {
             Created: {new Date(doc.createdAt).toLocaleString()} • Updated: {new Date(doc.updatedAt).toLocaleString()}
           </div>
         </div>
-
         <button className="btn btn-outline-primary" onClick={downloadPdf} disabled={pdfBusy}>
           {pdfBusy ? "Generating PDF…" : "Download PDF"}
         </button>
       </div>
 
-      {/* ✅ PDF export content starts here */}
+      {/*export content starts here */}
       <div ref={pdfRef} className="mt-3">
         {doc.type === "text" ? (
           <div className="card">
@@ -247,7 +223,6 @@ export default function PublicView() {
             </div>
           </div>
         )}
-
         {/* Comments read-only */}
         <div className="card mt-3">
           <div className="card-body">
@@ -270,7 +245,6 @@ export default function PublicView() {
         </div>
       </div>
       {}
-
       <div className="text-muted small mt-3">Read-only public view.</div>
     </div>
   );

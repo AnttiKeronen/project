@@ -7,8 +7,7 @@ export default function Login() {
   const nav = useNavigate();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [err, setErr] = useState("");
-
+  const [err, setError] = useState("");
   return (
     <div style={{ maxWidth: 420, margin: "40px auto" }}>
       <h2>Login</h2>
@@ -17,13 +16,13 @@ export default function Login() {
       <input placeholder="Password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} style={{ width: "100%", marginBottom: 8 }} />
       <button
         onClick={async () => {
-          setErr("");
+          setError("");
           try {
             const res = await api.post("/auth/login", { email, password });
             setToken(res.data.token);
             nav("/");
           } catch (e: any) {
-            setErr(e?.response?.data?.message ?? "Login failed");
+            setError(e?.response?.data?.message ?? "Login failed");
           }
         }}
       >

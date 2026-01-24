@@ -1,7 +1,9 @@
+import React from "react";
 import { Navigate } from "react-router-dom";
-import { isAuthed } from "../auth";
+import { isAuthenticated } from "../auth";
 
-export function ProtectedRoute({ children }: { children: JSX.Element }) {
-  if (!isAuthed()) return <Navigate to="/login" replace />;
-  return children;
+export function ProtectedRoute({ children }: { children: React.ReactNode }) {
+  // Redirect unauthenticated users to login page
+  if (!isAuthenticated()) return <Navigate to="/login" replace />;
+  return <>{children}</>;
 }

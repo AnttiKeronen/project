@@ -1,5 +1,5 @@
 import mongoose from "mongoose";
-
+// embedded schema for document comments
 const CommentSchema = new mongoose.Schema(
   {
     _id: { type: String, required: true }, // string id
@@ -10,29 +10,23 @@ const CommentSchema = new mongoose.Schema(
   },
   { _id: false }
 );
-
+// main document schema 
 const DocumentSchema = new mongoose.Schema(
   {
     ownerId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
-
     type: { type: String, enum: ["text", "spreadsheet"], default: "text" },
-
     title: { type: String, required: true },
-
-    // For text docs: EditorJS JSON string (or legacy plain text)
+    // text document content
     content: { type: String, default: "" },
-
-    // For spreadsheet docs: raw cell inputs ("1", "Hello", "=SUM(A1:A3)")
+    // spreadsheet cell
     spreadsheet: {
-      cells: { type: Map, of: String, default: {} } // key "A1" -> raw string
+      cells: { type: Map, of: String, default: {} }
     },
-
     editors: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
-
+    // read only
     publicShareId: { type: String, default: null },
     isPublic: { type: Boolean, default: false },
-
-    // Lock for editing
+    // lock for editing
     lock: {
       type: {
         userId: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
@@ -40,10 +34,8 @@ const DocumentSchema = new mongoose.Schema(
       },
       default: { userId: null, lockedAt: null }
     },
-
     comments: { type: [CommentSchema], default: [] }
   },
-  { timestamps: true }
+  { timestamps: true } 
 );
-
 export const Document = mongoose.model("Document", DocumentSchema);

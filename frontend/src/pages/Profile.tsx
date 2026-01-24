@@ -9,31 +9,26 @@ type Me = {
 
 export default function Profile() {
   const [me, setMe] = useState<Me | null>(null);
-  const [err, setErr] = useState("");
-  const [msg, setMsg] = useState("");
+  const [err, setError] = useState("");
+  const [msg, setMessage] = useState("");
   const [file, setFile] = useState<File | null>(null);
-
   async function load() {
-    setErr("");
+    setError("");
     try {
       const res = await api.get<Me>("/users/me");
       setMe(res.data);
     } catch (e: any) {
-      setErr(e?.response?.data?.message ?? "Failed to load profile");
+      setError(e?.response?.data?.message ?? "Failed to fetch your profile");
     }
   }
-
   useEffect(() => {
     load();
   }, []);
-
   return (
     <div className="container py-4" style={{ maxWidth: 720 }}>
       <h2>Profile</h2>
-
       {err && <div className="alert alert-danger mt-3">{err}</div>}
       {msg && <div className="alert alert-success mt-3">{msg}</div>}
-
       <div className="card mt-3">
         <div className="card-body">
           <div className="d-flex gap-3 align-items-center flex-wrap">
@@ -72,42 +67,36 @@ export default function Profile() {
               <div className="text-muted small">User ID: {me?.id || "—"}</div>
             </div>
           </div>
-
           <hr />
-
           <label className="form-label">Upload profile picture (PNG/JPG/WEBP, max 2MB)</label>
           <input
             className="form-control"
             type="file"
             accept="image/png,image/jpeg,image/webp"
             onChange={(e) => {
-              setMsg("");
-              setErr("");
+              setMessage("");
+              setError("");
               setFile(e.target.files?.[0] ?? null);
             }}
           />
-
           <button
             className="btn btn-primary mt-3"
             disabled={!file}
             onClick={async () => {
               if (!file) return;
-              setErr("");
-              setMsg("");
-
+              setError("");
+              setMessage("");
               try {
                 const fd = new FormData();
                 fd.append("avatar", file);
-
                 await api.post("/users/me/avatar", fd, {
                   headers: { "Content-Type": "multipart/form-data" }
                 });
-
-                setMsg("Profile picture updated.");
+                setMessage("Profile picture updated. Looking nice!");
                 setFile(null);
                 await load();
               } catch (e: any) {
-                setErr(e?.response?.data?.message ?? "Upload failed");
+                setError(e?.response?.data?.message ?? "Upload failed");
               }
             }}
           >

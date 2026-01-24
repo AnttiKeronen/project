@@ -1,5 +1,5 @@
 import { Link, useNavigate } from "react-router-dom";
-import { clearToken, isAuthed } from "../auth";
+import { clearTheToken, isAuthenticated } from "../auth";
 
 export function Navbar() {
   const nav = useNavigate();
@@ -10,8 +10,6 @@ export function Navbar() {
         <Link className="navbar-brand fw-bold" to="/">
           WebDevDrive
         </Link>
-
-        {/* Mobile toggle */}
         <button
           className="navbar-toggler"
           type="button"
@@ -23,19 +21,17 @@ export function Navbar() {
         >
           <span className="navbar-toggler-icon" />
         </button>
-
         <div className="collapse navbar-collapse" id="mainNavbar">
           <div className="ms-auto d-flex align-items-center gap-2 mt-3 mt-lg-0">
-            {isAuthed() ? (
+            {isAuthenticated() ? (
               <>
                 <Link className="btn btn-outline-primary btn-sm" to="/profile">
                   Profile
                 </Link>
-
                 <button
                   className="btn btn-outline-secondary btn-sm"
                   onClick={() => {
-                    clearToken();
+                    clearTheToken();
                     nav("/login");
                   }}
                 >
